@@ -192,32 +192,26 @@ class TTC:
         return self.item_index.get(key)
 
     def _parse_price(self, price_text: str) -> Optional[int]:
-        """Fiyat metnini sayıya çevirir - toplam fiyatı alır"""
+        """Fiyat metnini sayıya çevirir - birim fiyatı alır"""
         try:
             if not price_text:
                 return None
             
             # TTC formatı: "1.000 \nX\n5\n=\n5.000" 
-            # Toplam fiyatı almamız gerekiyor (= işaretinden sonraki)
+            # Birim fiyatı almamız gerekiyor (ilk satır)
             lines = [line.strip() for line in price_text.strip().split('\n') if line.strip()]
             
             log.debug(f"Tüm satırlar: {lines}")
             
-            # "=" işaretinden sonraki satırı bul (toplam fiyat)
-            total_price_line = None
-            for i, line in enumerate(lines):
-                if line == '=' and i + 1 < len(lines):
-                    total_price_line = lines[i + 1]
-                    break
-            
-            if not total_price_line:
-                # = bulunamazsa, ilk satırı dene (birim fiyat olabilir)
-                total_price_line = lines[0] if lines else ""
-            
-            log.debug(f"Toplam fiyat satırı: '{total_price_line}'")
+            # İlk satırı al (birim fiyat)
+            if not lines:
+                return None
+                
+            unit_price_line = lines[0]
+            log.debug(f"Birim fiyat satırı: '{unit_price_line}'")
             
             # Sadece rakam, nokta, virgül kalsın
-            clean_text = re.sub(r'[^\d\.,]', '', total_price_line)
+            clean_text = re.sub(r'[^\d\.,]', '', unit_price_line)
             
             if not clean_text:
                 return None
@@ -225,11 +219,11 @@ class TTC:
             # Farklı formatları test et
             possible_prices = []
             
-            # Format 1: 5.000 (nokta binlik ayıracı)
+            # Format 1: 1.000 (nokta binlik ayıracı)
             if '.' in clean_text and ',' not in clean_text:
                 if clean_text.count('.') == 1:
                     parts = clean_text.split('.')
-                    if len(parts[1]) == 3:  # 5.000 formatı
+                    if len(parts[1]) == 3:  # 1.000 formatı
                         price_str = clean_text.replace('.', '')
                         possible_prices.append(int(price_str))
                     else:  # Ondalık
@@ -239,7 +233,7 @@ class TTC:
                     price_str = clean_text.replace('.', '')
                     possible_prices.append(int(price_str))
             
-            # Format 2: 5,000 (virgül binlik ayıracı)
+            # Format 2: 1,000 (virgül binlik ayıracı)
             elif ',' in clean_text and '.' not in clean_text:
                 price_str = clean_text.replace(',', '')
                 possible_prices.append(int(price_str))
@@ -254,14 +248,14 @@ class TTC:
             else:
                 possible_prices.append(int(clean_text))
             
-            # En makul fiyatı seç (1-1M arası - toplam fiyat için)
+            # En makul fiyatı seç (sadece 0'dan büyük olsun)
             for price in possible_prices:
-                if 1 <= price <= 1_000_000:
-                    log.debug(f"Parse edildi: '{total_price_line}' -> {price}g (toplam)")
+                if price > 0:  # Sadece pozitif sayılar
+                    log.debug(f"Parse edildi: '{unit_price_line}' -> {price}g (birim)")
                     return price
             
-            # Hiçbiri makul değilse None döndür
-            log.warning(f"Makul toplam fiyat bulunamadı: '{total_price_line}' -> {possible_prices}")
+            # Hiçbiri geçerli değilse None döndür
+            log.warning(f"Geçerli birim fiyat bulunamadı: '{unit_price_line}' -> {possible_prices}")
             return None
             
         except Exception as e:
@@ -534,23 +528,32 @@ class Bot:
         return title + body, kb
 
     async def cmd_start(self, u: Update, c: ContextTypes.DEFAULT_TYPE):
-        user_name = u.effective_user.first_name or u.effective_user.username or "Oyuncu"
+        user_name = u.effective_user.first_name or u.effective_user.username or "Tamriel'li"
         text = (
-            f"👋 Merhaba <b>{esc_html(user_name)}</b>!\n\n"
-            "🎯 <b>ESO Price Tracker</b> - Elder Scrolls Online fiyat takip botuna hoş geldin!\n\n"
-            "📋 <b>Komutlar:</b>\n"
-            "🔸 <code>/add Dreugh Wax 50000</code> - Yeni fiyat alarmı ekle\n"
-            "🔸 <code>/list</code> - Aktif alarmlarını göster\n"
-            "🔸 <code>/test Dreugh Wax</code> - Bir itemin güncel fiyatını kontrol et\n"
-            "🔸 <code>/checknow</code> - Tüm alarmları şimdi kontrol et\n"
-            "🔸 <code>/help</code> - Bu yardım mesajını göster\n\n"
-            "💡 <b>Hızlı Ekleme:</b>\n"
-            "Mesaj olarak: <code>Aetherial Dust | 150000</code>\n\n"
-            "⚠️ <b>İlk Kullanım:</b>\n"
-            "İlk defa kullanırken <code>/test</code> komutu ile captcha'yı manuel çözmen gerekebilir.\n\n"
-            "🔄 Bot her <b>5 dakikada</b> bir alarmlarını kontrol eder ve eşik fiyatının altında item bulursa sana haber verir!"
+            f"Merhaba <b>{esc_html(user_name)}</b>!\n\n"
+            "🎮 <b>ESO Price Tracker</b> - Elder Scrolls Online fiyat takip botuna hoş geldin!\n\n"
+            "📱 <b>Nasıl Kullanılır:</b>\n"
+            "1️⃣ <code>/add Dragon Rheum 5000</code> - Yeni alarm ekle\n"
+            "2️⃣ Bot her 5 dakikada kontrol eder\n"
+            "3️⃣ Fiyat düştüğünde bildirim alırsın\n\n"
+            "⚡ <b>Hızlı Ekleme:</b> Mesaj olarak gönder\n"
+            "<code>Kuta | 8000</code>\n\n"
+            "🔧 <b>Diğer Komutlar:</b>\n"
+            "• <code>/list</code> - Alarmlarını gör\n"
+            "• <code>/test Dreugh Wax</code> - Anlık fiyat sorgula\n"
+            "• <code>/help</code> - Detaylı yardım\n\n"
+            "🎯 Bot Avrupa serverinden fiyat çeker ve birim fiyatları takip eder.\n\n"
+            "Hadi ilk alarmını ekle!"
         )
-        await u.message.reply_html(text)
+        
+        # Kullanışlı butonlar ekle
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Popüler Itemler", callback_data="popular_items")],
+            [InlineKeyboardButton("❓ Nasıl Kullanılır?", callback_data="how_to_use")],
+            [InlineKeyboardButton("⚙️ İpuçları", callback_data="tips")]
+        ])
+        
+        await u.message.reply_html(text, reply_markup=kb)
 
     async def cmd_help(self, u: Update, c: ContextTypes.DEFAULT_TYPE):
         text = (
@@ -581,13 +584,14 @@ class Bot:
     async def cmd_add(self, u: Update, c: ContextTypes.DEFAULT_TYPE):
         if len(c.args) < 2:
             example_text = (
-                "❌ <b>Hatalı kullanım!</b>\n\n"
+                "❌ <b>Eksik bilgi!</b>\n\n"
                 "✅ <b>Doğru kullanım:</b>\n"
                 "• <code>/add Dreugh Wax 50000</code>\n"
                 "• <code>/add Kuta 8000</code>\n"
-                "• <code>/add Aetherial Dust 150000</code>\n\n"
-                "💡 <b>Alternatif:</b> Mesaj olarak da gönderebilirsin:\n"
-                "<code>Dreugh Wax | 50000</code>"
+                "• <code>/add Perfect Roe 150000</code>\n\n"
+                "💡 <b>İpucu:</b> Veya mesaj olarak gönder:\n"
+                "<code>Dreugh Wax | 50000</code>\n\n"
+                "🎯 Bot belirlediğin fiyat veya altında item bulduğunda sana haber verecek!"
             )
             return await u.message.reply_html(example_text)
             
@@ -595,7 +599,7 @@ class Bot:
         item = " ".join(name_parts).strip()
         
         if len(item) < 2:
-            return await u.message.reply_html("❌ Item adı çok kısa!")
+            return await u.message.reply_html("❌ Item adı en az 2 karakter olmalı!")
             
         try:
             thr = int(str(price).replace(".", "").replace(",", ""))
@@ -604,25 +608,27 @@ class Bot:
         except Exception:
             return await u.message.reply_html(
                 "❌ Fiyat sayı olmalı!\n\n"
-                "✅ <b>Örnek:</b> <code>/add Dreugh Wax 50000</code>\n"
-                "❌ <b>Yanlış:</b> <code>/add Dreugh Wax 50.000</code>"
+                "✅ <b>Doğru:</b> <code>/add Dreugh Wax 50000</code>\n"
+                "❌ <b>Yanlış:</b> <code>/add Dreugh Wax elli bin</code>\n\n"
+                "💡 Sadece rakam kullan (50000, 150000 gibi)"
             )
             
-        # Kullanıcının kaç alarmı var kontrol et
+        # Kullanıcının alarm sayısını kontrol et
         existing_alerts = self.db.list_user(u.effective_user.id)
         if len(existing_alerts) >= 15:
             return await u.message.reply_html(
-                "⚠️ Maksimum 15 alarm ekleyebilirsin!\n\n"
-                "Önce bazı alarmları sil: <code>/list</code>"
+                "⚠️ En fazla 15 alarm ekleyebilirsin!\n\n"
+                "🗑️ Önce bazı alarmları sil: <code>/list</code>\n\n"
+                "💡 Çok alarm eklemek yerine önemli olanları seç!"
             )
             
-        # Aynı item için alarm var mı kontrol et
+        # Aynı item kontrolü
         for alert in existing_alerts:
             if alert['item_name'].lower() == item.lower():
                 return await u.message.reply_html(
-                    f"⚠️ <b>{esc_html(item)}</b> için zaten bir alarm var!\n\n"
-                    f"Mevcut eşik: <b>{fmt_gold(alert['threshold_price'])}g</b>\n\n"
-                    "Önce eskisini sil: <code>/list</code>"
+                    f"⚠️ <b>{esc_html(item)}</b> için zaten alarm var!\n\n"
+                    f"📊 Mevcut eşik: <b>{fmt_gold(alert['threshold_price'])}g</b>\n\n"
+                    "💡 Önce eskisini sil: <code>/list</code>"
                 )
         
         self.db.add(u.effective_user.id, u.effective_user.username or "", item, thr)
@@ -630,14 +636,17 @@ class Bot:
         success_text = (
             "✅ <b>Alarm başarıyla eklendi!</b>\n\n"
             f"🎯 <b>Item:</b> {esc_html(item)}\n"
-            f"💰 <b>Eşik:</b> {fmt_gold(thr)}g ve altı\n"
-            f"🔄 <b>Kontrol:</b> Her 5 dakikada\n\n"
-            "Eşik fiyatının altında item bulunduğunda sana haber vereceğim! 🔔"
+            f"💰 <b>Hedef fiyat:</b> {fmt_gold(thr)}g ve altı\n"
+            f"⏰ <b>Kontrol sıklığı:</b> Her 5 dakika\n"
+            f"🌍 <b>Server:</b> Avrupa (EU)\n\n"
+            "🔔 Fiyat düştüğünde hemen bildirim alacaksın!\n\n"
+            "💡 İstersen şimdi test edebilirsin:"
         )
         
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📋 Alarmlarım", callback_data="list_alerts")],
-            [InlineKeyboardButton(f"🧪 {item} Test Et", callback_data=f"test_{item}")]
+            [InlineKeyboardButton(f"🧪 {item} Test Et", callback_data=f"test_{item}")],
+            [InlineKeyboardButton("📋 Tüm Alarmlar", callback_data="list_alerts")],
+            [InlineKeyboardButton("➕ Başka Alarm Ekle", callback_data="add_more")]
         ])
         
         await u.message.reply_html(success_text, reply_markup=kb)
@@ -837,7 +846,8 @@ class Bot:
                 return await q.edit_message_text(
                     "✅ <b>Alarm silindi!</b>\n\n"
                     "💡 Yeni alarm eklemek için:\n"
-                    "<code>/add ItemAdı FiyatEşiği</code>"
+                    "<code>/add ItemAdı FiyatEşiği</code>\n\n"
+                    "Veya mesaj olarak: <code>ItemAdı | Fiyat</code>"
                 )
             else:
                 return await q.edit_message_text("❌ Alarm silinemedi veya bulunamadı.")
@@ -848,7 +858,8 @@ class Bot:
                 if a["id"] == alert_id:
                     await q.edit_message_text(
                         f"🔍 <b>{esc_html(a['item_name'])}</b> kontrol ediliyor...\n\n"
-                        "⏳ 10-30 saniye sürebilir"
+                        "⏳ Bu işlem 10-30 saniye sürebilir\n"
+                        "🌍 Avrupa serverinden fiyat çekiliyor..."
                     )
                     
                     try:
@@ -860,19 +871,19 @@ class Bot:
                         time_str = time.strftime("%H:%M", time.localtime())
                         
                         if res.price:
-                            price_line = f"💰 <b>{fmt_gold(res.price)}g</b>"
+                            price_line = f"💰 <b>{fmt_gold(res.price)}g</b> (birim fiyat)"
                             if res.price <= a["threshold_price"]:
-                                price_line += " 🔥 <b>FIRSAT!</b>"
+                                price_line += "\n🔥 <b>HEDEF FİYATIN ALTINDA!</b>"
                         else:
                             price_line = "💰 <i>Fiyat alınamadı</i>"
                         
                         result_text = (
-                            f"🎯 <b>{esc_html(a['item_name'])}</b>\n\n"
+                            f"📊 <b>{esc_html(a['item_name'])} - Anlık Kontrol</b>\n\n"
                             f"{price_line}\n"
-                            f"🎯 <b>Eşik:</b> {fmt_gold(a['threshold_price'])}g\n"
+                            f"🎯 <b>Hedef fiyat:</b> {fmt_gold(a['threshold_price'])}g\n"
                             f"🏪 <b>Satıcı:</b> {esc_html(res.guild or 'Bilinmiyor')}\n"
-                            f"⏰ <b>Kontrol:</b> {time_str}\n"
-                            f"📡 <b>Kaynak:</b> {res.source}"
+                            f"⏰ <b>Kontrol zamanı:</b> {time_str}\n"
+                            f"🌍 <b>Server:</b> Avrupa (EU)"
                         )
                         
                         kb = InlineKeyboardMarkup([
@@ -886,8 +897,8 @@ class Bot:
                         return await q.edit_message_text(
                             f"❌ <b>Kontrol hatası!</b>\n\n"
                             f"🎯 <b>Item:</b> {esc_html(a['item_name'])}\n"
-                            f"🔧 <b>Hata:</b> {str(e)[:50]}...\n\n"
-                            "💡 Tekrar deneyin"
+                            f"🔧 <b>Sorun:</b> {str(e)[:50]}...\n\n"
+                            "💡 Tekrar dene veya /test komutu kullan"
                         )
         
         elif data.startswith("test_"):
@@ -900,25 +911,104 @@ class Bot:
             await q.edit_message_text(
                 f"➕ <b>{esc_html(item)} için alarm ekleme</b>\n\n"
                 "💡 Şu komutu kullan:\n"
-                f"<code>/add {esc_html(item)} FIYAT_EŞİĞİ</code>\n\n"
+                f"<code>/add {esc_html(item)} HEDEF_FİYAT</code>\n\n"
                 "<b>Örnek:</b>\n"
-                f"<code>/add {esc_html(item)} 50000</code>"
+                f"<code>/add {esc_html(item)} 50000</code>\n\n"
+                "🎯 Bot bu fiyat veya altında bulduğunda sana haber verecek!"
             )
         
         elif data == "list_alerts":
             await self.cmd_list(Update(update_id=0, message=q.message), c)
         
+        elif data == "popular_items":
+            await q.edit_message_text(
+                "🔥 <b>Popüler ESO Itemleri</b>\n\n"
+                "💎 <b>Upgrade Materials:</b>\n"
+                "• Dreugh Wax (30.000-60.000g)\n"
+                "• Tempering Alloy (15.000-30.000g)\n"
+                "• Kuta (7.000-12.000g)\n"
+                "• Rosin (20.000-40.000g)\n\n"
+                "🧪 <b>Alchemy:</b>\n"
+                "• Cornflower (800-1.500g)\n"
+                "• Columbine (600-1.200g)\n"
+                "• Perfect Roe (100.000-200.000g)\n\n"
+                "⚔️ <b>Other:</b>\n"
+                "• Aetherial Dust (80.000-150.000g)\n"
+                "• Dragon Rheum (3.000-8.000g)\n\n"
+                "💡 Parantez içindeki fiyatlar ortalama aralık"
+            )
+        
+        elif data == "how_to_use":
+            await q.edit_message_text(
+                "📚 <b>Nasıl Kullanılır?</b>\n\n"
+                "1️⃣ <b>Alarm Ekle:</b>\n"
+                "<code>/add Dreugh Wax 45000</code>\n"
+                "Veya mesaj olarak: <code>Dreugh Wax | 45000</code>\n\n"
+                "2️⃣ <b>Bot Otomatik Çalışır:</b>\n"
+                "• Her 5 dakikada kontrol eder\n"
+                "• Avrupa serverinden veri çeker\n"
+                "• Birim fiyatları takip eder\n\n"
+                "3️⃣ <b>Bildirim Alırsın:</b>\n"
+                "• Fiyat hedefin altına düştüğünde\n"
+                "• Hangi satıcıdan, nerede\n"
+                "• Direkt TTC linkiyle\n\n"
+                "4️⃣ <b>Yönetim:</b>\n"
+                "• <code>/list</code> - Alarmlarını gör\n"
+                "• <code>/test ItemAdı</code> - Anlık kontrol\n\n"
+                "🎯 Maksimum 15 alarm ekleyebilirsin!"
+            )
+        
+        elif data == "tips":
+            await q.edit_message_text(
+                "💡 <b>İpuçları ve Tavsiyeler</b>\n\n"
+                "🎯 <b>Fiyat Belirleme:</b>\n"
+                "• TTC'de ortalama fiyatı kontrol et\n"
+                "• %10-20 altında hedef belirle\n"
+                "• Çok düşük hedef koyma (bulunmaz)\n\n"
+                "📊 <b>Alarm Yönetimi:</b>\n"
+                "• En çok 10-12 alarm kullan\n"
+                "• Gereksizleri sil (/list)\n"
+                "• Popüler itemleri takip et\n\n"
+                "⚡ <b>Hızlı Kullanım:</b>\n"
+                "• Mesaj olarak gönder: <code>Kuta | 8000</code>\n"
+                "• /test ile anlık kontrol yap\n"
+                "• TTC linkine tıklayıp satın al\n\n"
+                "🔔 <b>Bildirimler:</b>\n"
+                "• Hemen satın al, çabuk tükenir\n"
+                "• Aynı item 10dk sonra tekrar kontrol edilir\n\n"
+                "❓ Sorun mu var? /help komutu kullan!"
+            )
+        
+        elif data == "add_more":
+            await q.edit_message_text(
+                "➕ <b>Yeni Alarm Ekle</b>\n\n"
+                "Şu yöntemlerden birini kullan:\n\n"
+                "🔸 <b>Komut ile:</b>\n"
+                "<code>/add ItemAdı HedefFiyat</code>\n"
+                "<i>Örnek: /add Kuta 8000</i>\n\n"
+                "🔸 <b>Mesaj ile:</b>\n"
+                "<code>ItemAdı | HedefFiyat</code>\n"
+                "<i>Örnek: Kuta | 8000</i>\n\n"
+                "💡 Item adını TTC'deki gibi İngilizce yaz\n"
+                "🎯 Fiyatı gold cinsinden yaz (8000, 50000...)"
+            )
+        
         elif data == "help_add":
             await q.edit_message_text(
                 "➕ <b>Alarm Ekleme Rehberi</b>\n\n"
-                "🔸 <code>/add Dreugh Wax 50000</code>\n"
-                "🔸 <code>/add Kuta 8000</code>\n"
-                "🔸 Mesaj: <code>Aetherial Dust | 150000</code>\n\n"
-                "💡 <b>Kurallar:</b>\n"
-                "• Fiyatları nokta/virgül olmadan yaz\n"
-                "• Item adı doğru olmalı\n"
+                "📝 <b>Doğru Format:</b>\n"
+                "• <code>/add Dreugh Wax 50000</code>\n"
+                "• <code>/add Kuta 8000</code>\n"
+                "• Mesaj: <code>Perfect Roe | 150000</code>\n\n"
+                "✅ <b>Kurallar:</b>\n"
+                "• Item adı İngilizce olmalı\n"
+                "• Fiyat sadece rakam (50000)\n"
+                "• Nokta/virgül kullanma\n"
                 "• Maksimum 15 alarm\n\n"
-                "❓ Sorun mu var? <code>/help</code>"
+                "🎯 <b>İpucu:</b>\n"
+                "TTC sitesinde item adını kontrol et,\n"
+                "aynı ismi kullan.\n\n"
+                "❓ Hala sorun mu var? /help yazın!"
             )
 
     async def cmd_test_callback(self, query, item: str):
